@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Configuration variables
-DOMAIN="neteng.aryansabet.com"
+DOMAIN="aryansabet.com"
 EMAIL="aryansitefa@gmail.com"
 PROJECT_DIR="/var/www/secure-website"
 
@@ -44,12 +44,11 @@ validate_email() {
 get_user_input() {
     read -p "Enter your domain name (without www): " DOMAIN
     validate_domain "$DOMAIN"
-
     read -p "Enter your email address: " EMAIL
     validate_email "$EMAIL"
 }
 
-# Install Node.js 22 and other dependencies
+# Install dependencies
 install_dependencies() {
     print_message "Installing curl if not present..." "$YELLOW"
     sudo apt-get update
@@ -83,6 +82,110 @@ setup_firewall() {
     check_error "Failed to configure firewall"
 }
 
+# Configure initial Nginx without SSL
+setup_initial_nginx() {
+    print_message "Configuring initial Nginx setup..." "$YELLOW"
+
+    # Create initial Nginx configuration (HTTP only)
+    cat >/etc/nginx/sites-available/$DOMAIN <<EOL
+server {
+    listen 80;
+    server_name ${DOMAIN} www.${DOMAIN};
+    
+    root /var/www/html;
+    index index.html;
+    
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+    
+    location /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+    }
+}
+EOL
+
+    # Create letsencrypt directory
+    sudo mkdir -p /var/www/letsencrypt
+
+    # Enable site configuration
+    sudo ln -sf /etc/nginx/sites-available/$DOMAIN /etc/nginx/sites-enabled/
+
+    # Remove default site if it exists
+    sudo rm -f /etc/nginx/sites-enabled/default
+
+    # Test configuration
+    sudo nginx -t
+    check_error "Initial Nginx configuration test failed"
+
+    # Restart Nginx
+    sudo systemctl restart nginx
+    check_error "Failed to restart Nginx"
+}
+
+# Set up Let's Encrypt certificate
+setup_ssl() {
+    print_message "Setting up SSL certificate..." "$YELLOW"
+
+    sudo certbot --nginx -d $DOMAIN -d www.$DOMAIN --non-interactive --agree-tos --email $EMAIL
+    check_error "Failed to obtain SSL certificate"
+
+    # Set up auto-renewal
+    sudo systemctl enable certbot.timer
+    sudo systemctl start certbot.timer
+}
+
+# Configure final Nginx with SSL
+setup_final_nginx() {
+    print_message "Configuring final Nginx setup with SSL..." "$YELLOW"
+
+    cat >/etc/nginx/sites-available/$DOMAIN <<EOL
+server {
+    listen 80;
+    server_name ${DOMAIN} www.${DOMAIN};
+    
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+    
+    location /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    server_name ${DOMAIN} www.${DOMAIN};
+    
+    ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+    
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    
+    location / {
+        proxy_pass http://localhost:443;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+    }
+}
+EOL
+
+    sudo nginx -t
+    check_error "Final Nginx configuration test failed"
+
+    sudo systemctl restart nginx
+    check_error "Failed to restart Nginx"
+}
+
 # Create Node.js application
 create_nodejs_app() {
     print_message "Creating Node.js application..." "$YELLOW"
@@ -108,7 +211,7 @@ create_nodejs_app() {
 }
 EOL
 
-    # Create app.js with ES modules syntax
+    # Create app.js
     cat >$PROJECT_DIR/app.js <<EOL
 import express from 'express';
 import https from 'https';
@@ -164,73 +267,7 @@ EOL
     check_error "Failed to install Node.js dependencies"
 }
 
-# Configure Nginx
-setup_nginx() {
-    print_message "Configuring Nginx..." "$YELLOW"
-
-    # Create Nginx configuration
-    cat >/etc/nginx/sites-available/$DOMAIN <<EOL
-server {
-    listen 80;
-    server_name ${DOMAIN} www.${DOMAIN};
-    
-    location / {
-        return 301 https://\$host\$request_uri;
-    }
-    
-    location /.well-known/acme-challenge/ {
-        root /var/www/letsencrypt;
-    }
-}
-
-server {
-    listen 443 ssl http2;
-    server_name ${DOMAIN} www.${DOMAIN};
-    
-    ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
-    
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
-    ssl_prefer_server_ciphers on;
-    ssl_session_cache shared:SSL:10m;
-    ssl_session_timeout 10m;
-    
-    add_header Strict-Transport-Security "max-age=31536000" always;
-    
-    location / {
-        proxy_pass http://localhost:443;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host \$host;
-        proxy_cache_bypass \$http_upgrade;
-    }
-}
-EOL
-
-    # Enable site configuration
-    sudo ln -sf /etc/nginx/sites-available/$DOMAIN /etc/nginx/sites-enabled/
-    sudo nginx -t
-    check_error "Nginx configuration test failed"
-
-    sudo systemctl restart nginx
-    check_error "Failed to restart Nginx"
-}
-
-# Set up Let's Encrypt certificate
-setup_ssl() {
-    print_message "Setting up SSL certificate..." "$YELLOW"
-
-    sudo certbot --nginx -d $DOMAIN -d www.$DOMAIN --non-interactive --agree-tos --email $EMAIL
-    check_error "Failed to obtain SSL certificate"
-
-    # Set up auto-renewal
-    sudo systemctl enable certbot.timer
-    sudo systemctl start certbot.timer
-}
-
-# Create systemd service for Node.js app
+# Create systemd service
 create_service() {
     print_message "Creating systemd service..." "$YELLOW"
 
@@ -268,9 +305,10 @@ main() {
     get_user_input
     install_dependencies
     setup_firewall
-    create_nodejs_app
-    setup_nginx
+    setup_initial_nginx
     setup_ssl
+    setup_final_nginx
+    create_nodejs_app
     create_service
 
     print_message "Installation completed successfully!" "$GREEN"
