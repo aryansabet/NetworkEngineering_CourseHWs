@@ -1,0 +1,281 @@
+ curl -O https://raw.githubusercontent.com/aryansabet/NetworkEngineering_CourseHWs/refs/heads/main/main.sh 
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100  6263  100  6263    0     0  11725      0 --:--:-- --:--:-- --:--:-- 11728
+ubuntu@ubuntu-sb1-small1-shahriar-1:~$ chmod +x ./main.sh
+ubuntu@ubuntu-sb1-small1-shahriar-1:~$ ls
+main.sh
+ubuntu@ubuntu-sb1-small1-shahriar-1:~$ ./main.sh
+Please run as root (sudo)
+ubuntu@ubuntu-sb1-small1-shahriar-1:~$ sudo ./main.sh
+Starting secure website setup...
+Enter domain name (without www): aryansabet.com
+Enter email address: aryansitefa@gmail.com
+Installing dependencies...
+Get:1 http://security.ubuntu.com/ubuntu noble-security InRelease [126 kB]
+Get:2 http://nova.clouds.archive.ubuntu.com/ubuntu noble InRelease [256 kB]
+Get:3 http://security.ubuntu.com/ubuntu noble-security/main amd64 Packages [438 kB]
+Get:4 http://nova.clouds.archive.ubuntu.com/ubuntu noble-updates InRelease [126 kB]
+Get:5 http://nova.clouds.archive.ubuntu.com/ubuntu noble-backports InRelease [126 kB]
+Get:6 http://security.ubuntu.com/ubuntu noble-security/main amd64 Components [7236 B]
+Get:7 http://security.ubuntu.com/ubuntu noble-security/main amd64 c-n-f Metadata [5892 B]
+Get:8 http://security.ubuntu.com/ubuntu noble-security/universe amd64 Packages [557 kB]
+Get:9 http://security.ubuntu.com/ubuntu noble-security/universe amd64 Components [51.9 kB]
+Get:10 http://security.ubuntu.com/ubuntu noble-security/universe amd64 c-n-f Metadata [13.5 kB]
+Get:11 http://security.ubuntu.com/ubuntu noble-security/restricted amd64 Packages [394 kB]
+Get:12 http://security.ubuntu.com/ubuntu noble-security/restricted amd64 Components [212 B]
+Get:13 http://security.ubuntu.com/ubuntu noble-security/restricted amd64 c-n-f Metadata [424 B]
+Get:14 http://security.ubuntu.com/ubuntu noble-security/multiverse amd64 Packages [12.2 kB]
+Get:15 http://security.ubuntu.com/ubuntu noble-security/multiverse amd64 Components [212 B]
+Get:16 http://security.ubuntu.com/ubuntu noble-security/multiverse amd64 c-n-f Metadata [356 B]
+Get:17 http://nova.clouds.archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages [611 kB]
+Get:18 http://nova.clouds.archive.ubuntu.com/ubuntu noble-updates/main amd64 Components [114 kB]
+Get:19 http://nova.clouds.archive.ubuntu.com/ubuntu noble-updates/main amd64 c-n-f Metadata [10.4 kB]
+Get:20 http://nova.clouds.archive.ubuntu.com/ubuntu noble-updates/universe amd64 Packages [710 kB]
+Get:21 http://nova.clouds.archive.ubuntu.com/ubuntu noble-updates/universe amd64 Components [305 kB]
+Get:22 http://nova.clouds.archive.ubuntu.com/ubuntu noble-updates/universe amd64 c-n-f Metadata [19.9 kB]
+Get:23 http://nova.clouds.archive.ubuntu.com/ubuntu noble-updates/restricted amd64 Packages [405 kB]
+Get:24 http://nova.clouds.archive.ubuntu.com/ubuntu noble-updates/restricted amd64 Components [212 B]
+Get:25 http://nova.clouds.archive.ubuntu.com/ubuntu noble-updates/restricted amd64 c-n-f Metadata [424 B]
+Get:26 http://nova.clouds.archive.ubuntu.com/ubuntu noble-updates/multiverse amd64 Packages [15.0 kB]
+Get:27 http://nova.clouds.archive.ubuntu.com/ubuntu noble-updates/multiverse amd64 Components [940 B]
+Get:28 http://nova.clouds.archive.ubuntu.com/ubuntu noble-updates/multiverse amd64 c-n-f Metadata [552 B]
+Get:29 http://nova.clouds.archive.ubuntu.com/ubuntu noble-backports/main amd64 Components [208 B]
+Get:30 http://nova.clouds.archive.ubuntu.com/ubuntu noble-backports/universe amd64 Packages [10.6 kB]
+Get:31 http://nova.clouds.archive.ubuntu.com/ubuntu noble-backports/universe amd64 Components [21.1 kB]
+Get:32 http://nova.clouds.archive.ubuntu.com/ubuntu noble-backports/universe amd64 c-n-f Metadata [1104 B]
+Get:33 http://nova.clouds.archive.ubuntu.com/ubuntu noble-backports/restricted amd64 Components [212 B]
+Get:34 http://nova.clouds.archive.ubuntu.com/ubuntu noble-backports/multiverse amd64 Components [212 B]
+Fetched 4341 kB in 6s (723 kB/s)
+Reading package lists... Done
+Reading package lists... Done
+Building dependency tree... Done
+Reading state information... Done
+curl is already the newest version (8.5.0-2ubuntu10.4).
+curl set to manually installed.
+ufw is already the newest version (0.36.2-6).
+ufw set to manually installed.
+The following additional packages will be installed:
+  nginx-common python3-acme python3-certbot python3-configargparse python3-josepy python3-parsedatetime
+  python3-rfc3339
+Suggested packages:
+  python-certbot-doc python3-certbot-apache fcgiwrap nginx-doc ssl-cert python-acme-doc python-certbot-nginx-doc
+Recommended packages:
+  python3-icu
+The following NEW packages will be installed:
+  certbot nginx nginx-common python3-acme python3-certbot python3-certbot-nginx python3-configargparse python3-josepy
+  python3-parsedatetime python3-rfc3339
+0 upgraded, 10 newly installed, 0 to remove and 35 not upgraded.
+Need to get 1116 kB of archives.
+After this operation, 4405 kB of additional disk space will be used.
+Get:1 http://nova.clouds.archive.ubuntu.com/ubuntu noble-updates/main amd64 nginx-common all 1.24.0-2ubuntu7.1 [31.2 kB]
+Get:2 http://nova.clouds.archive.ubuntu.com/ubuntu noble-updates/main amd64 nginx amd64 1.24.0-2ubuntu7.1 [521 kB]
+Get:3 http://nova.clouds.archive.ubuntu.com/ubuntu noble/universe amd64 python3-josepy all 1.14.0-1 [22.1 kB]
+Get:4 http://nova.clouds.archive.ubuntu.com/ubuntu noble/universe amd64 python3-rfc3339 all 1.1-4 [6744 B]
+Get:5 http://nova.clouds.archive.ubuntu.com/ubuntu noble/universe amd64 python3-acme all 2.9.0-1 [48.5 kB]
+Get:6 http://nova.clouds.archive.ubuntu.com/ubuntu noble/universe amd64 python3-configargparse all 1.7-1 [31.7 kB]
+Get:7 http://nova.clouds.archive.ubuntu.com/ubuntu noble/universe amd64 python3-parsedatetime all 2.6-3 [32.8 kB]
+Get:8 http://nova.clouds.archive.ubuntu.com/ubuntu noble/universe amd64 python3-certbot all 2.9.0-1 [267 kB]
+Get:9 http://nova.clouds.archive.ubuntu.com/ubuntu noble/universe amd64 certbot all 2.9.0-1 [89.2 kB]
+Get:10 http://nova.clouds.archive.ubuntu.com/ubuntu noble/universe amd64 python3-certbot-nginx all 2.9.0-1 [66.0 kB]
+Fetched 1116 kB in 2s (609 kB/s)
+Preconfiguring packages ...
+Selecting previously unselected package nginx-common.
+(Reading database ... 36993 files and directories currently installed.)
+Preparing to unpack .../0-nginx-common_1.24.0-2ubuntu7.1_all.deb ...
+Unpacking nginx-common (1.24.0-2ubuntu7.1) ...
+Selecting previously unselected package nginx.
+Preparing to unpack .../1-nginx_1.24.0-2ubuntu7.1_amd64.deb ...
+Unpacking nginx (1.24.0-2ubuntu7.1) ...
+Selecting previously unselected package python3-josepy.
+Preparing to unpack .../2-python3-josepy_1.14.0-1_all.deb ...
+Unpacking python3-josepy (1.14.0-1) ...
+Selecting previously unselected package python3-rfc3339.
+Preparing to unpack .../3-python3-rfc3339_1.1-4_all.deb ...
+Unpacking python3-rfc3339 (1.1-4) ...
+Selecting previously unselected package python3-acme.
+Preparing to unpack .../4-python3-acme_2.9.0-1_all.deb ...
+Unpacking python3-acme (2.9.0-1) ...
+Selecting previously unselected package python3-configargparse.
+Preparing to unpack .../5-python3-configargparse_1.7-1_all.deb ...
+Unpacking python3-configargparse (1.7-1) ...
+Selecting previously unselected package python3-parsedatetime.
+Preparing to unpack .../6-python3-parsedatetime_2.6-3_all.deb ...
+Unpacking python3-parsedatetime (2.6-3) ...
+Selecting previously unselected package python3-certbot.
+Preparing to unpack .../7-python3-certbot_2.9.0-1_all.deb ...
+Unpacking python3-certbot (2.9.0-1) ...
+Selecting previously unselected package certbot.
+Preparing to unpack .../8-certbot_2.9.0-1_all.deb ...
+Unpacking certbot (2.9.0-1) ...
+Selecting previously unselected package python3-certbot-nginx.
+Preparing to unpack .../9-python3-certbot-nginx_2.9.0-1_all.deb ...
+Unpacking python3-certbot-nginx (2.9.0-1) ...
+Setting up python3-configargparse (1.7-1) ...
+Setting up python3-parsedatetime (2.6-3) ...
+Setting up python3-josepy (1.14.0-1) ...
+Setting up python3-rfc3339 (1.1-4) ...
+Setting up python3-acme (2.9.0-1) ...
+Setting up python3-certbot (2.9.0-1) ...
+Setting up certbot (2.9.0-1) ...
+Created symlink /etc/systemd/system/timers.target.wants/certbot.timer → /usr/lib/systemd/system/certbot.timer.
+Setting up nginx (1.24.0-2ubuntu7.1) ...
+Setting up python3-certbot-nginx (2.9.0-1) ...
+Setting up nginx-common (1.24.0-2ubuntu7.1) ...
+Created symlink /etc/systemd/system/multi-user.target.wants/nginx.service → /usr/lib/systemd/system/nginx.service.
+Processing triggers for ufw (0.36.2-6) ...
+Processing triggers for man-db (2.12.0-4build2) ...
+Scanning processes...
+Scanning linux images...
+
+Running kernel seems to be up-to-date.
+
+No services need to be restarted.
+
+No containers need to be restarted.
+
+No user sessions are running outdated binaries.
+
+No VM guests are running outdated hypervisor (qemu) binaries on this host.
+2024-11-02 14:36:02 - Installing pre-requisites
+Get:1 http://nova.clouds.archive.ubuntu.com/ubuntu noble InRelease [256 kB]
+Hit:2 http://security.ubuntu.com/ubuntu noble-security InRelease
+Get:3 http://nova.clouds.archive.ubuntu.com/ubuntu noble-updates InRelease [126 kB]
+Get:4 http://nova.clouds.archive.ubuntu.com/ubuntu noble-backports InRelease [126 kB]
+Get:5 http://nova.clouds.archive.ubuntu.com/ubuntu noble-updates/main amd64 Components [114 kB]
+Get:6 http://nova.clouds.archive.ubuntu.com/ubuntu noble-updates/universe amd64 Packages [710 kB]
+Get:7 http://nova.clouds.archive.ubuntu.com/ubuntu noble-updates/universe amd64 Components [305 kB]
+Get:8 http://nova.clouds.archive.ubuntu.com/ubuntu noble-updates/restricted amd64 Components [212 B]
+Get:9 http://nova.clouds.archive.ubuntu.com/ubuntu noble-updates/multiverse amd64 Components [940 B]
+Get:10 http://nova.clouds.archive.ubuntu.com/ubuntu noble-backports/main amd64 Components [208 B]
+Get:11 http://nova.clouds.archive.ubuntu.com/ubuntu noble-backports/universe amd64 Components [21.0 kB]
+Get:12 http://nova.clouds.archive.ubuntu.com/ubuntu noble-backports/restricted amd64 Components [212 B]
+Get:13 http://nova.clouds.archive.ubuntu.com/ubuntu noble-backports/multiverse amd64 Components [212 B]
+Fetched 1660 kB in 2s (958 kB/s)
+Reading package lists... Done
+Reading package lists... Done
+Building dependency tree... Done
+Reading state information... Done
+ca-certificates is already the newest version (20240203).
+ca-certificates set to manually installed.
+curl is already the newest version (8.5.0-2ubuntu10.4).
+gnupg is already the newest version (2.4.4-2ubuntu17).
+gnupg set to manually installed.
+The following NEW packages will be installed:
+  apt-transport-https
+0 upgraded, 1 newly installed, 0 to remove and 35 not upgraded.
+Need to get 3974 B of archives.
+After this operation, 35.8 kB of additional disk space will be used.
+Get:1 http://nova.clouds.archive.ubuntu.com/ubuntu noble/universe amd64 apt-transport-https all 2.7.14build2 [3974 B]
+Fetched 3974 B in 0s (9124 B/s)
+Selecting previously unselected package apt-transport-https.
+(Reading database ... 37425 files and directories currently installed.)
+Preparing to unpack .../apt-transport-https_2.7.14build2_all.deb ...
+Unpacking apt-transport-https (2.7.14build2) ...
+Setting up apt-transport-https (2.7.14build2) ...
+Scanning processes...
+Scanning linux images...
+
+Running kernel seems to be up-to-date.
+
+No services need to be restarted.
+
+No containers need to be restarted.
+
+No user sessions are running outdated binaries.
+
+No VM guests are running outdated hypervisor (qemu) binaries on this host.
+Get:1 http://nova.clouds.archive.ubuntu.com/ubuntu noble InRelease [256 kB]
+Hit:2 http://security.ubuntu.com/ubuntu noble-security InRelease
+Get:3 https://deb.nodesource.com/node_20.x nodistro InRelease [12.1 kB]
+Get:4 https://deb.nodesource.com/node_20.x nodistro/main amd64 Packages [9452 B]
+Hit:5 http://nova.clouds.archive.ubuntu.com/ubuntu noble-updates InRelease
+Hit:6 http://nova.clouds.archive.ubuntu.com/ubuntu noble-backports InRelease
+Fetched 277 kB in 1s (225 kB/s)
+Reading package lists... Done
+2024-11-02 14:36:16 - Repository configured successfully.
+2024-11-02 14:36:16 - To install Node.js, run: apt-get install nodejs -y
+2024-11-02 14:36:16 - You can use N|solid Runtime as a node.js alternative
+2024-11-02 14:36:16 - To install N|solid Runtime, run: apt-get install nsolid -y
+
+Reading package lists... Done
+Building dependency tree... Done
+Reading state information... Done
+The following NEW packages will be installed:
+  nodejs
+0 upgraded, 1 newly installed, 0 to remove and 35 not upgraded.
+Need to get 31.8 MB of archives.
+After this operation, 197 MB of additional disk space will be used.
+Get:1 https://deb.nodesource.com/node_20.x nodistro/main amd64 nodejs amd64 20.18.0-1nodesource1 [31.8 MB]
+Fetched 31.8 MB in 5s (6063 kB/s)
+Selecting previously unselected package nodejs.
+(Reading database ... 37429 files and directories currently installed.)
+Preparing to unpack .../nodejs_20.18.0-1nodesource1_amd64.deb ...
+Unpacking nodejs (20.18.0-1nodesource1) ...
+Setting up nodejs (20.18.0-1nodesource1) ...
+Processing triggers for man-db (2.12.0-4build2) ...
+Scanning processes...
+Scanning linux images...
+
+Running kernel seems to be up-to-date.
+
+No services need to be restarted.
+
+No containers need to be restarted.
+
+No user sessions are running outdated binaries.
+
+No VM guests are running outdated hypervisor (qemu) binaries on this host.
+Node.js v20.18.0 installed
+Configuring firewall...
+Rules updated
+Rules updated (v6)
+Rules updated
+Rules updated (v6)
+Rules updated
+Rules updated (v6)
+Firewall is active and enabled on system startup
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+Setting up SSL with Let's Encrypt...
+Saving debug log to /var/log/letsencrypt/letsencrypt.log
+Account registered.
+Requesting a certificate for aryansabet.com and www.aryansabet.com
+
+Successfully received certificate.
+Certificate is saved at: /etc/letsencrypt/live/aryansabet.com/fullchain.pem
+Key is saved at:         /etc/letsencrypt/live/aryansabet.com/privkey.pem
+This certificate expires on 2025-01-31.
+These files will be updated when the certificate renews.
+Certbot has set up a scheduled task to automatically renew this certificate in the background.
+
+Deploying certificate
+Successfully deployed certificate for aryansabet.com to /etc/nginx/sites-enabled/aryansabet.com
+Successfully deployed certificate for www.aryansabet.com to /etc/nginx/sites-enabled/aryansabet.com
+Congratulations! You have successfully enabled HTTPS on https://aryansabet.com and https://www.aryansabet.com
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+If you like Certbot, please consider supporting our work by:
+ * Donating to ISRG / Let's Encrypt:   https://letsencrypt.org/donate
+ * Donating to EFF:                    https://eff.org/donate-le
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+Setting up Node.js application...
+
+added 66 packages, and audited 67 packages in 13s
+
+13 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+npm notice
+npm notice New minor version of npm available! 10.8.2 -> 10.9.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v10.9.0
+npm notice To update run: npm install -g npm@10.9.0
+npm notice
+Creating systemd service...
+Created symlink /etc/systemd/system/multi-user.target.wants/secure-website.service → /etc/systemd/system/secure-website.service.
+Installation completed successfully!
+Your secure website is now available at https://aryansabet.com
+Node.js version: v20.18.0
