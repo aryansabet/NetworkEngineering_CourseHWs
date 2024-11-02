@@ -18,6 +18,10 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 NC='\033[0m'
 
+# Create output directory first
+mkdir -p "$OUTPUT_DIR"
+touch "$LOG_FILE"
+
 log() {
     echo -e "${2:-$NC}$1${NC}" | tee -a "$LOG_FILE"
 }
@@ -42,16 +46,22 @@ install_dependencies() {
     pip3 install scapy cryptography
 }
 
-# Create analysis directory
+# Setup environment
 setup_environment() {
-    mkdir -p "$OUTPUT_DIR"
     # Export SSLKEYLOG variable for browsers to use
     export SSLKEYLOGFILE="$SSLKEYLOG_FILE"
+    touch "$SSLKEYLOG_FILE"
 }
 
 # Capture traffic
 capture_traffic() {
     log "Starting packet capture for $CAPTURE_DURATION seconds..." "$GREEN"
+
+    # Get the actual interface name if not specified
+    if [ "$CAPTURE_INTERFACE" = "eth0" ]; then
+        CAPTURE_INTERFACE=$(ip route get 8.8.8.8 | awk '{print $5; exit}')
+        log "Using interface: $CAPTURE_INTERFACE" "$GREEN"
+    fi
 
     tshark -i "$CAPTURE_INTERFACE" \
         -f "$CAPTURE_FILTER" \
@@ -137,6 +147,35 @@ run_python_analyzer() {
         "${OUTPUT_DIR}/detailed_analysis.json"
 }
 
+# Display Results
+display_results() {
+    log "\nAnalysis Results Summary:" "$GREEN"
+
+    # Display handshake metadata
+    if [ -f "${OUTPUT_DIR}/handshake_metadata.txt" ]; then
+        log "\nHandshake Metadata (first 5 lines):" "$GREEN"
+        head -n 5 "${OUTPUT_DIR}/handshake_metadata.txt"
+    fi
+
+    # Display cipher suites
+    if [ -f "${OUTPUT_DIR}/cipher_suites.txt" ]; then
+        log "\nDetected Cipher Suites:" "$GREEN"
+        cat "${OUTPUT_DIR}/cipher_suites.txt"
+    fi
+
+    # Display summary from detailed analysis
+    if [ -f "${OUTPUT_DIR}/detailed_analysis.json" ]; then
+        log "\nDetailed Analysis Summary:" "$GREEN"
+        python3 -c "
+import json
+with open('${OUTPUT_DIR}/detailed_analysis.json') as f:
+    data = json.load(f)
+print(f'Client Hello Messages: {len(data[\"client_hello\"])}')
+print(f'Server Hello Messages: {len(data[\"server_hello\"])}')
+"
+    fi
+}
+
 # Main function
 main() {
     if [ "$EUID" -ne 0 ]; then
@@ -151,8 +190,9 @@ main() {
     analyze_handshake
     create_python_analyzer
     run_python_analyzer
+    display_results
 
-    log "Analysis completed. Results are in $OUTPUT_DIR" "$GREEN"
+    log "\nAnalysis completed. Results are in $OUTPUT_DIR" "$GREEN"
     log "Key files:" "$GREEN"
     log "- Handshake metadata: ${OUTPUT_DIR}/handshake_metadata.txt" "$GREEN"
     log "- Cipher suites: ${OUTPUT_DIR}/cipher_suites.txt" "$GREEN"
