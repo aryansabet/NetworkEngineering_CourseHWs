@@ -4,7 +4,7 @@
 DOMAIN=""
 EMAIL=""
 PROJECT_DIR="/var/www/secure-website"
-APP_PORT=3000 # Changed from 443 to avoid conflict with HTTPS
+APP_PORT=3000 
 
 # Color codes for output
 RED='\033[0;31m'
@@ -73,6 +73,7 @@ setup_firewall() {
     sudo ufw allow 80/tcp
     sudo ufw allow 443/tcp
     sudo ufw allow OpenSSH
+    sudo ufw allow $APP_PORT
     sudo ufw --force enable
     check_error "Failed to configure firewall"
 }
@@ -96,16 +97,7 @@ server {
     listen 443 ssl http2;
     server_name ${DOMAIN} www.${DOMAIN};
     
-    ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
-    
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
-    ssl_prefer_server_ciphers off;
-    ssl_session_cache shared:SSL:10m;
-    ssl_session_timeout 10m;
-    
-    add_header Strict-Transport-Security "max-age=31536000" always;
+    # SSL configuration will be handled by Certbot
     
     location / {
         proxy_pass http://localhost:${APP_PORT};
@@ -114,6 +106,9 @@ server {
         proxy_set_header Connection 'upgrade';
         proxy_set_header Host \$host;
         proxy_cache_bypass \$http_upgrade;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
     }
 }
 EOL
@@ -139,6 +134,18 @@ setup_ssl() {
     sudo systemctl start certbot.timer
 }
 
+# Set up Let's Encrypt certificate
+setup_ssl() {
+    print_message "Setting up SSL certificate..." "$YELLOW"
+
+    sudo certbot --nginx -d $DOMAIN -d www.$DOMAIN --non-interactive --agree-tos --email $EMAIL --redirect
+    check_error "Failed to obtain SSL certificate"
+
+    # Set up auto-renewal
+    sudo systemctl enable certbot.timer
+    sudo systemctl start certbot.timer
+}
+
 # Create Node.js application
 create_nodejs_app() {
     print_message "Creating Node.js application..." "$YELLOW"
@@ -154,7 +161,6 @@ create_nodejs_app() {
   "version": "1.0.0",
   "description": "Secure website with Let's Encrypt",
   "main": "app.js",
-  "type": "module",
   "scripts": {
     "start": "node app.js"
   },
@@ -277,7 +283,6 @@ main() {
 
     print_message "Installation completed successfully!" "$GREEN"
     print_message "Your secure website is now available at https://$DOMAIN" "$GREEN"
-    print_message "Node.js version: $(node -v)" "$GREEN"
 }
 
 # Run the script
