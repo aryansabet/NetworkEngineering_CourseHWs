@@ -11,15 +11,15 @@ OUTPUT_DIR="/tmp/tls_analysis"
 LOG_FILE="${OUTPUT_DIR}/analysis.log"
 PCAP_FILE="${OUTPUT_DIR}/capture.pcap"
 DECRYPTED_FILE="${OUTPUT_DIR}/decrypted.pcap"
-DOMAIN="aryansabet.com"
-SSL_KEY_PATH="/etc/letsencrypt/live/$DOMAIN/privkey.pem"
-SSL_CERT_PATH="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
+PROJECT_DIR="/var/www/secure-website"
+LETSENCRYPT_DIR="/etc/letsencrypt/live"
 
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 NC='\033[0m'
 
+# Initialize logging
 init_logging() {
     sudo mkdir -p "$OUTPUT_DIR"
     sudo touch "$LOG_FILE"
@@ -37,49 +37,50 @@ error() {
     exit 1
 }
 
-# Convert ECDSA key to RSA for tshark compatibility
-convert_key() {
-    local key_type
-    key_type=$(openssl pkey -in "$SSL_KEY_PATH" -text | grep -o "PRIVATE KEY.*" | head -1)
-
-    if [[ $key_type == *"EC PRIVATE KEY"* ]]; then
-        log "Converting ECDSA key to RSA format..." "$GREEN"
-
-        # Generate temporary RSA key
-        openssl genrsa -out "${OUTPUT_DIR}/temp_rsa.pem" 2048
-
-        # Generate CSR using the original cert
-        openssl x509 -in "$SSL_CERT_PATH" -x509toreq -signkey "$SSL_KEY_PATH" -out "${OUTPUT_DIR}/temp.csr"
-
-        # Sign with the new RSA key
-        openssl x509 -req -days 1 -in "${OUTPUT_DIR}/temp.csr" -signkey "${OUTPUT_DIR}/temp_rsa.pem" -out "${OUTPUT_DIR}/temp_cert.pem"
-
-        # Use the new RSA key for decryption
-        SSL_KEY_PATH="${OUTPUT_DIR}/temp_rsa.pem"
-        SSL_CERT_PATH="${OUTPUT_DIR}/temp_cert.pem"
-
-        # Cleanup CSR
-        rm -f "${OUTPUT_DIR}/temp.csr"
-    else
-        log "Using existing RSA key..." "$GREEN"
-        cp "$SSL_KEY_PATH" "${OUTPUT_DIR}/privkey.pem"
-        cp "$SSL_CERT_PATH" "${OUTPUT_DIR}/cert.pem"
-        SSL_KEY_PATH="${OUTPUT_DIR}/privkey.pem"
-        SSL_CERT_PATH="${OUTPUT_DIR}/cert.pem"
-    fi
-
-    # Set permissions
-    chmod 644 "$SSL_KEY_PATH"
-    chmod 644 "$SSL_CERT_PATH"
+# Find domain from nginx configuration
+find_domain() {
+    local domain=""
+    for conf in /etc/nginx/sites-enabled/*; do
+        if [ -f "$conf" ]; then
+            domain=$(grep -m 1 "server_name" "$conf" | awk '{print $2}' | tr -d ';')
+            if [ ! -z "$domain" ]; then
+                echo "$domain"
+                return 0
+            fi
+        fi
+    done
+    return 1
 }
 
 # Check SSL certificates
-check_certificates() {
-    log "Checking SSL certificates..." "$GREEN"
-    if [ ! -f "$SSL_KEY_PATH" ] || [ ! -f "$SSL_CERT_PATH" ]; then
-        error "SSL certificates not found. Please ensure Let's Encrypt certificates are properly installed."
+setup_certificates() {
+    log "Setting up SSL certificates for analysis..." "$GREEN"
+
+    # Find the domain from nginx config
+    DOMAIN=$(find_domain)
+    if [ -z "$DOMAIN" ]; then
+        error "Could not find domain in nginx configuration"
     fi
-    convert_key
+    log "Found domain: $DOMAIN" "$GREEN"
+
+    # Check Let's Encrypt certificates
+    SSL_KEY_PATH="${LETSENCRYPT_DIR}/${DOMAIN}/privkey.pem"
+    SSL_CERT_PATH="${LETSENCRYPT_DIR}/${DOMAIN}/fullchain.pem"
+
+    if [ ! -f "$SSL_KEY_PATH" ] || [ ! -f "$SSL_CERT_PATH" ]; then
+        error "SSL certificates not found for domain $DOMAIN"
+    fi
+
+    # Create working copies of the certificates
+    sudo cp "$SSL_KEY_PATH" "${OUTPUT_DIR}/privkey.pem"
+    sudo cp "$SSL_CERT_PATH" "${OUTPUT_DIR}/fullchain.pem"
+    sudo chmod 644 "${OUTPUT_DIR}/privkey.pem"
+    sudo chmod 644 "${OUTPUT_DIR}/fullchain.pem"
+
+    # Set up SSLKEYLOG for additional decryption capability
+    export SSLKEYLOGFILE="${OUTPUT_DIR}/sslkey.log"
+    sudo touch "$SSLKEYLOGFILE"
+    sudo chmod 666 "$SSLKEYLOGFILE"
 }
 
 # Install dependencies
@@ -90,24 +91,16 @@ install_dependencies() {
         tshark \
         python3-full \
         python3-venv \
-        curl \
         openssl \
         wireshark-common
 
+    # Setup Python virtual environment
     python3 -m venv "$OUTPUT_DIR/venv"
     source "$OUTPUT_DIR/venv/bin/activate"
     pip install scapy cryptography pyOpenSSL
 }
 
-# Export SSLKEYLOG for Chrome/Firefox
-setup_sslkeylog() {
-    export SSLKEYLOGFILE="${OUTPUT_DIR}/sslkey.log"
-    touch "$SSLKEYLOGFILE"
-    chmod 666 "$SSLKEYLOGFILE"
-    log "SSLKEYLOG file setup at $SSLKEYLOGFILE" "$GREEN"
-}
-
-# Capture traffic with both key methods
+# Capture traffic
 capture_traffic() {
     log "Starting packet capture for $CAPTURE_DURATION seconds..." "$GREEN"
 
@@ -116,19 +109,20 @@ capture_traffic() {
         log "Using interface: $CAPTURE_INTERFACE" "$GREEN"
     fi
 
-    # Capture with both SSLKEYLOG and private key
+    # Capture with both keylog and certificate-based decryption
     sudo tshark -i "$CAPTURE_INTERFACE" \
         -f "$CAPTURE_FILTER" \
         -w "$PCAP_FILE" \
         -o "tls.keylog_file:${SSLKEYLOGFILE}" \
-        -o "tls.keys_list:${DOMAIN},443,http,${SSL_KEY_PATH}" \
+        -o "tls.keys_list:${DOMAIN},443,http,${OUTPUT_DIR}/privkey.pem" \
         -a duration:"$CAPTURE_DURATION"
 }
 
+# Analyze captured traffic
 analyze_traffic() {
     log "Analyzing TLS traffic..." "$GREEN"
 
-    # Extract handshake metadata
+    # Analyze TLS handshake metadata
     sudo tshark -r "$PCAP_FILE" \
         -Y "tls.handshake" \
         -T fields \
@@ -142,7 +136,7 @@ analyze_traffic() {
         -E header=y \
         >"${OUTPUT_DIR}/handshake_metadata.txt"
 
-    # Extract cipher suites and key exchange info
+    # Analyze cipher suites
     sudo tshark -r "$PCAP_FILE" \
         -Y "tls.handshake.type == 1" \
         -T fields \
@@ -150,12 +144,13 @@ analyze_traffic() {
         -e tls.handshake.extensions.supported_groups \
         >"${OUTPUT_DIR}/cipher_suites.txt"
 
-    # Try decryption with both methods
+    # Try to decrypt and analyze HTTP traffic
     sudo tshark -r "$PCAP_FILE" \
         -o "tls.keylog_file:${SSLKEYLOGFILE}" \
-        -o "tls.keys_list:${DOMAIN},443,http,${SSL_KEY_PATH}" \
+        -o "tls.keys_list:${DOMAIN},443,http,${OUTPUT_DIR}/privkey.pem" \
         -Y "http" \
         -T fields \
+        -e frame.time \
         -e http.request.method \
         -e http.request.uri \
         -e http.response.code \
@@ -165,39 +160,74 @@ analyze_traffic() {
     # Save full decrypted traffic
     sudo tshark -r "$PCAP_FILE" \
         -o "tls.keylog_file:${SSLKEYLOGFILE}" \
-        -o "tls.keys_list:${DOMAIN},443,http,${SSL_KEY_PATH}" \
+        -o "tls.keys_list:${DOMAIN},443,http,${OUTPUT_DIR}/privkey.pem" \
         -w "$DECRYPTED_FILE"
+
+    # Extract TLS session info
+    sudo tshark -r "$PCAP_FILE" \
+        -Y "tls.handshake" \
+        -T json \
+        >"${OUTPUT_DIR}/tls_sessions.json"
 }
 
-[... rest of the script remains the same ...]
+# Create summary report
+create_summary() {
+    local summary_file="${OUTPUT_DIR}/analysis_summary.txt"
+
+    {
+        echo "TLS Traffic Analysis Summary"
+        echo "============================"
+        echo
+        echo "Domain: $DOMAIN"
+        echo "Capture Duration: $CAPTURE_DURATION seconds"
+        echo "Interface: $CAPTURE_INTERFACE"
+        echo
+        echo "TLS Handshakes:"
+        grep -c "handshake" "${OUTPUT_DIR}/handshake_metadata.txt" || echo "0"
+        echo
+        echo "Cipher Suites Used:"
+        sort -u "${OUTPUT_DIR}/cipher_suites.txt" | while read -r cipher; do
+            echo "- $cipher"
+        done
+        echo
+        echo "HTTP Requests (Decrypted):"
+        wc -l <"${OUTPUT_DIR}/decrypted_http.txt"
+    } >"$summary_file"
+
+    log "\nAnalysis Summary:" "$GREEN"
+    cat "$summary_file"
+}
+
+# Clean up temporary files
+cleanup() {
+    log "Cleaning up temporary files..." "$GREEN"
+    sudo rm -f "${OUTPUT_DIR}/privkey.pem" "${OUTPUT_DIR}/fullchain.pem"
+    sudo chmod -R 755 "$OUTPUT_DIR"
+}
 
 main() {
     if [ "$EUID" -ne 0 ]; then
         error "Please run as root (sudo)"
     fi
 
-    log "Starting TLS traffic analysis with decryption..." "$GREEN"
+    log "Starting TLS traffic analysis..." "$GREEN"
 
     install_dependencies
-    setup_sslkeylog
-    check_certificates
+    setup_certificates
     capture_traffic
     analyze_traffic
-    create_python_analyzer
-    run_python_analyzer
-    display_results
-
-    # Cleanup temporary files
-    rm -f "${OUTPUT_DIR}/temp_rsa.pem" "${OUTPUT_DIR}/temp_cert.pem"
+    create_summary
+    cleanup
 
     log "\nAnalysis completed. Results are in $OUTPUT_DIR" "$GREEN"
     log "Key files:" "$GREEN"
     log "- Raw capture: $PCAP_FILE" "$GREEN"
     log "- Decrypted capture: $DECRYPTED_FILE" "$GREEN"
     log "- Handshake metadata: ${OUTPUT_DIR}/handshake_metadata.txt" "$GREEN"
+    log "- Cipher suites: ${OUTPUT_DIR}/cipher_suites.txt" "$GREEN"
     log "- Decrypted HTTP traffic: ${OUTPUT_DIR}/decrypted_http.txt" "$GREEN"
-    log "- Detailed analysis: ${OUTPUT_DIR}/detailed_analysis.json" "$GREEN"
-    log "- SSL key log: $SSLKEYLOGFILE" "$GREEN"
+    log "- TLS sessions: ${OUTPUT_DIR}/tls_sessions.json" "$GREEN"
+    log "- Analysis summary: ${OUTPUT_DIR}/analysis_summary.txt" "$GREEN"
 }
 
 main "$@"
