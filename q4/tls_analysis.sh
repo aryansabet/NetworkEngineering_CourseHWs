@@ -18,12 +18,20 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 NC='\033[0m'
 
-# Create output directory first
-mkdir -p "$OUTPUT_DIR"
-touch "$LOG_FILE"
+# Initialize logging
+init_logging() {
+    # Create directory if it doesn't exist
+    sudo mkdir -p "$OUTPUT_DIR"
+    # Create log file and set permissions
+    sudo touch "$LOG_FILE"
+    sudo chmod 666 "$LOG_FILE"
+}
+
+# Initialize first
+init_logging
 
 log() {
-    echo -e "${2:-$NC}$1${NC}" | tee -a "$LOG_FILE"
+    echo -e "${2:-$NC}$1${NC}" | sudo tee -a "$LOG_FILE"
 }
 
 error() {
@@ -34,8 +42,8 @@ error() {
 # Install dependencies
 install_dependencies() {
     log "Installing dependencies..." "$GREEN"
-    apt-get update
-    apt-get install -y \
+    sudo apt-get update
+    sudo apt-get install -y \
         tshark \
         python3 \
         python3-pip \
@@ -43,14 +51,15 @@ install_dependencies() {
         openssl
 
     # Install Python dependencies
-    pip3 install scapy cryptography
+    sudo pip3 install scapy cryptography
 }
 
 # Setup environment
 setup_environment() {
     # Export SSLKEYLOG variable for browsers to use
     export SSLKEYLOGFILE="$SSLKEYLOG_FILE"
-    touch "$SSLKEYLOG_FILE"
+    sudo touch "$SSLKEYLOG_FILE"
+    sudo chmod 666 "$SSLKEYLOG_FILE"
 }
 
 # Capture traffic
@@ -63,18 +72,17 @@ capture_traffic() {
         log "Using interface: $CAPTURE_INTERFACE" "$GREEN"
     fi
 
-    tshark -i "$CAPTURE_INTERFACE" \
+    sudo tshark -i "$CAPTURE_INTERFACE" \
         -f "$CAPTURE_FILTER" \
         -w "$PCAP_FILE" \
-        -a duration:"$CAPTURE_DURATION" \
-        2>>"$LOG_FILE"
+        -a duration:"$CAPTURE_DURATION"
 }
 
 # Analyze TLS handshake metadata
 analyze_handshake() {
     log "Analyzing TLS handshake metadata..." "$GREEN"
 
-    tshark -r "$PCAP_FILE" \
+    sudo tshark -r "$PCAP_FILE" \
         -Y "tls.handshake" \
         -T fields \
         -e frame.number \
@@ -83,20 +91,20 @@ analyze_handshake() {
         -e ip.dst \
         -e tls.handshake.type \
         -e tls.handshake.version \
-        -E header=y \
-        >"${OUTPUT_DIR}/handshake_metadata.txt"
+        -E header=y |
+        sudo tee "${OUTPUT_DIR}/handshake_metadata.txt"
 
     # Extract cipher suites offered
-    tshark -r "$PCAP_FILE" \
+    sudo tshark -r "$PCAP_FILE" \
         -Y "tls.handshake.type == 1" \
         -T fields \
-        -e tls.handshake.ciphersuite \
-        >"${OUTPUT_DIR}/cipher_suites.txt"
+        -e tls.handshake.ciphersuite |
+        sudo tee "${OUTPUT_DIR}/cipher_suites.txt"
 }
 
 # Python script for detailed TLS analysis
 create_python_analyzer() {
-    cat >"${OUTPUT_DIR}/tls_analyzer.py" <<'EOF'
+    cat <<'EOF' | sudo tee "${OUTPUT_DIR}/tls_analyzer.py"
 from scapy.all import *
 from scapy.layers.tls.all import *
 import sys
@@ -136,13 +144,13 @@ if __name__ == '__main__':
     analyze_pcap(sys.argv[1], sys.argv[2])
 EOF
 
-    chmod +x "${OUTPUT_DIR}/tls_analyzer.py"
+    sudo chmod +x "${OUTPUT_DIR}/tls_analyzer.py"
 }
 
 # Run the Python analyzer
 run_python_analyzer() {
     log "Running detailed TLS analysis..." "$GREEN"
-    python3 "${OUTPUT_DIR}/tls_analyzer.py" \
+    sudo python3 "${OUTPUT_DIR}/tls_analyzer.py" \
         "$PCAP_FILE" \
         "${OUTPUT_DIR}/detailed_analysis.json"
 }
@@ -166,7 +174,7 @@ display_results() {
     # Display summary from detailed analysis
     if [ -f "${OUTPUT_DIR}/detailed_analysis.json" ]; then
         log "\nDetailed Analysis Summary:" "$GREEN"
-        python3 -c "
+        sudo python3 -c "
 import json
 with open('${OUTPUT_DIR}/detailed_analysis.json') as f:
     data = json.load(f)
@@ -176,12 +184,15 @@ print(f'Server Hello Messages: {len(data[\"server_hello\"])}')
     fi
 }
 
+# Cleanup function
+cleanup() {
+    # Set appropriate permissions for all generated files
+    sudo chmod -R 644 "${OUTPUT_DIR}"/*
+    sudo chmod 755 "${OUTPUT_DIR}"
+}
+
 # Main function
 main() {
-    if [ "$EUID" -ne 0 ]; then
-        error "Please run as root (sudo)"
-    fi
-
     log "Starting TLS traffic analysis..." "$GREEN"
 
     install_dependencies
@@ -191,6 +202,7 @@ main() {
     create_python_analyzer
     run_python_analyzer
     display_results
+    cleanup
 
     log "\nAnalysis completed. Results are in $OUTPUT_DIR" "$GREEN"
     log "Key files:" "$GREEN"
