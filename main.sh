@@ -4,6 +4,7 @@
 DOMAIN="aryansabet.com"
 EMAIL="aryansitefa@gmail.com"
 PROJECT_DIR="/var/www/secure-website"
+APP_PORT=3000 # Changed from 443 to avoid conflict with HTTPS
 
 # Color codes for output
 RED='\033[0;31m'
@@ -50,26 +51,10 @@ get_user_input() {
 
 # Install dependencies
 install_dependencies() {
-    print_message "Installing curl if not present..." "$YELLOW"
+    print_message "Installing dependencies..." "$YELLOW"
     sudo apt-get update
-    sudo apt-get install -y curl
-    check_error "Failed to install curl"
-
-    print_message "Downloading Node.js 22 setup script..." "$YELLOW"
-    curl -fsSL https://deb.nodesource.com/setup_22.x -o nodesource_setup.sh
-    check_error "Failed to download Node.js setup script"
-
-    print_message "Running Node.js setup script..." "$YELLOW"
-    sudo -E bash nodesource_setup.sh
-    check_error "Failed to run Node.js setup script"
-
-    print_message "Installing Node.js and other dependencies..." "$YELLOW"
-    sudo apt-get install -y nodejs nginx certbot python3-certbot-nginx ufw
+    sudo apt-get install -y curl nodejs npm nginx certbot python3-certbot-nginx ufw
     check_error "Failed to install dependencies"
-
-    # Verify Node.js installation
-    NODE_VERSION=$(node -v)
-    print_message "Node.js version $NODE_VERSION installed successfully" "$GREEN"
 }
 
 # Configure firewall
@@ -78,67 +63,16 @@ setup_firewall() {
 
     sudo ufw allow 'Nginx Full'
     sudo ufw allow OpenSSH
+    sudo ufw allow $APP_PORT
     sudo ufw --force enable
     check_error "Failed to configure firewall"
 }
 
-# Configure initial Nginx without SSL
-setup_initial_nginx() {
-    print_message "Configuring initial Nginx setup..." "$YELLOW"
+# Configure Nginx
+setup_nginx() {
+    print_message "Configuring Nginx..." "$YELLOW"
 
-    # Create initial Nginx configuration (HTTP only)
-    cat >/etc/nginx/sites-available/$DOMAIN <<EOL
-server {
-    listen 80;
-    server_name ${DOMAIN} www.${DOMAIN};
-    
-    root /var/www/html;
-    index index.html;
-    
-    location / {
-        try_files \$uri \$uri/ =404;
-    }
-    
-    location /.well-known/acme-challenge/ {
-        root /var/www/letsencrypt;
-    }
-}
-EOL
-
-    # Create letsencrypt directory
-    sudo mkdir -p /var/www/letsencrypt
-
-    # Enable site configuration
-    sudo ln -sf /etc/nginx/sites-available/$DOMAIN /etc/nginx/sites-enabled/
-
-    # Remove default site if it exists
-    sudo rm -f /etc/nginx/sites-enabled/default
-
-    # Test configuration
-    sudo nginx -t
-    check_error "Initial Nginx configuration test failed"
-
-    # Restart Nginx
-    sudo systemctl restart nginx
-    check_error "Failed to restart Nginx"
-}
-
-# Set up Let's Encrypt certificate
-setup_ssl() {
-    print_message "Setting up SSL certificate..." "$YELLOW"
-
-    sudo certbot --nginx -d $DOMAIN -d www.$DOMAIN --non-interactive --agree-tos --email $EMAIL
-    check_error "Failed to obtain SSL certificate"
-
-    # Set up auto-renewal
-    sudo systemctl enable certbot.timer
-    sudo systemctl start certbot.timer
-}
-
-# Configure final Nginx with SSL
-setup_final_nginx() {
-    print_message "Configuring final Nginx setup with SSL..." "$YELLOW"
-
+    # Create Nginx configuration
     cat >/etc/nginx/sites-available/$DOMAIN <<EOL
 server {
     listen 80;
@@ -147,43 +81,50 @@ server {
     location / {
         return 301 https://\$host\$request_uri;
     }
-    
-    location /.well-known/acme-challenge/ {
-        root /var/www/letsencrypt;
-    }
 }
 
 server {
     listen 443 ssl http2;
     server_name ${DOMAIN} www.${DOMAIN};
     
-    ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
-    
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
-    ssl_prefer_server_ciphers on;
-    ssl_session_cache shared:SSL:10m;
-    ssl_session_timeout 10m;
-    
-    add_header Strict-Transport-Security "max-age=31536000" always;
+    # SSL configuration will be handled by Certbot
     
     location / {
-        proxy_pass http://localhost:443;
+        proxy_pass http://localhost:${APP_PORT};
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection 'upgrade';
         proxy_set_header Host \$host;
         proxy_cache_bypass \$http_upgrade;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
     }
 }
 EOL
 
+    # Enable site configuration
+    sudo ln -sf /etc/nginx/sites-available/$DOMAIN /etc/nginx/sites-enabled/
+    sudo rm -f /etc/nginx/sites-enabled/default
+
+    # Test Nginx configuration
     sudo nginx -t
-    check_error "Final Nginx configuration test failed"
+    check_error "Nginx configuration test failed"
 
     sudo systemctl restart nginx
     check_error "Failed to restart Nginx"
+}
+
+# Set up Let's Encrypt certificate
+setup_ssl() {
+    print_message "Setting up SSL certificate..." "$YELLOW"
+
+    sudo certbot --nginx -d $DOMAIN -d www.$DOMAIN --non-interactive --agree-tos --email $EMAIL --redirect
+    check_error "Failed to obtain SSL certificate"
+
+    # Set up auto-renewal
+    sudo systemctl enable certbot.timer
+    sudo systemctl start certbot.timer
 }
 
 # Create Node.js application
@@ -201,7 +142,6 @@ create_nodejs_app() {
   "version": "1.0.0",
   "description": "Secure website with Let's Encrypt",
   "main": "app.js",
-  "type": "module",
   "scripts": {
     "start": "node app.js"
   },
@@ -213,17 +153,11 @@ EOL
 
     # Create app.js
     cat >$PROJECT_DIR/app.js <<EOL
-import express from 'express';
-import https from 'https';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const dirname = path.dirname(filename);
+const express = require('express');
+const path = require('path');
 
 const app = express();
-const PORT = process.env.PORT || 443;
+const PORT = process.env.PORT || ${APP_PORT};
 
 app.use(express.json());
 app.use(express.static('public'));
@@ -232,15 +166,9 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-const sslOptions = {
-    key: fs.readFileSync('/etc/letsencrypt/live/${DOMAIN}/privkey.pem'),
-    cert: fs.readFileSync('/etc/letsencrypt/live/${DOMAIN}/fullchain.pem')
-};
-
-https.createServer(sslOptions, app)
-    .listen(PORT, () => {
-        console.log(\Secure server running on port \${PORT}\);
-    });
+app.listen(PORT, () => {
+    console.log(\`Server running on port \${PORT}\`);
+});
 EOL
 
     # Create public directory and index.html
@@ -252,11 +180,28 @@ EOL
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Secure Website</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            text-align: center;
+        }
+        .container {
+            background-color: #f5f5f5;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 50px;
+        }
+    </style>
 </head>
 <body>
-    <h1>Welcome to my secure website!</h1>
-    <p>This site is protected by HTTPS using Let's Encrypt</p>
-    <p>Running on Node.js $(node -v)</p>
+    <div class="container">
+        <h1>Welcome to your secure website!</h1>
+        <p>This site is protected by HTTPS using Let's Encrypt</p>
+        <p>🔒 Your connection is secure</p>
+    </div>
 </body>
 </html>
 EOL
@@ -282,6 +227,7 @@ User=$USER
 WorkingDirectory=$PROJECT_DIR
 ExecStart=/usr/bin/node app.js
 Restart=on-failure
+Environment=PORT=${APP_PORT}
 
 [Install]
 WantedBy=multi-user.target
@@ -305,15 +251,13 @@ main() {
     get_user_input
     install_dependencies
     setup_firewall
-    setup_initial_nginx
+    setup_nginx
     setup_ssl
-    setup_final_nginx
     create_nodejs_app
     create_service
 
     print_message "Installation completed successfully!" "$GREEN"
     print_message "Your secure website is now available at https://$DOMAIN" "$GREEN"
-    print_message "Node.js version: $(node -v)" "$GREEN"
 }
 
 # Run the script
