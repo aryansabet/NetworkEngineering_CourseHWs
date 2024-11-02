@@ -4,14 +4,14 @@
 set -e
 
 # Configuration
-CAPTURE_INTERFACE="eth0" # Change this to your interface
-CAPTURE_DURATION=60      # Capture duration in seconds
+CAPTURE_INTERFACE="eth0"
+CAPTURE_DURATION=60
 CAPTURE_FILTER="tcp port 443"
 OUTPUT_DIR="/tmp/tls_analysis"
 LOG_FILE="${OUTPUT_DIR}/analysis.log"
 SSLKEYLOG_FILE="${OUTPUT_DIR}/sslkeylog.txt"
 PCAP_FILE="${OUTPUT_DIR}/capture.pcap"
-DECRYPTED_FILE="${OUTPUT_DIR}/decrypted.txt"
+VENV_DIR="${OUTPUT_DIR}/venv"
 
 # Colors for output
 RED='\033[0;31m'
@@ -20,14 +20,11 @@ NC='\033[0m'
 
 # Initialize logging
 init_logging() {
-    # Create directory if it doesn't exist
     sudo mkdir -p "$OUTPUT_DIR"
-    # Create log file and set permissions
     sudo touch "$LOG_FILE"
     sudo chmod 666 "$LOG_FILE"
 }
 
-# Initialize first
 init_logging
 
 log() {
@@ -39,34 +36,32 @@ error() {
     exit 1
 }
 
-# Install dependencies
-install_dependencies() {
-    log "Installing dependencies..." "$GREEN"
+# Install system dependencies
+install_system_dependencies() {
+    log "Installing system dependencies..." "$GREEN"
     sudo apt-get update
     sudo apt-get install -y \
         tshark \
-        python3 \
-        python3-pip \
+        python3-full \
+        python3-venv \
         curl \
         openssl
-
-    # Install Python dependencies
-    sudo pip3 install scapy cryptography
 }
 
-# Setup environment
-setup_environment() {
-    # Export SSLKEYLOG variable for browsers to use
-    export SSLKEYLOGFILE="$SSLKEYLOG_FILE"
-    sudo touch "$SSLKEYLOG_FILE"
-    sudo chmod 666 "$SSLKEYLOG_FILE"
+# Setup Python virtual environment
+setup_virtual_environment() {
+    log "Setting up Python virtual environment..." "$GREEN"
+    python3 -m venv "$VENV_DIR"
+    # Activate virtual environment
+    source "$VENV_DIR/bin/activate"
+    # Install Python packages in virtual environment
+    pip install scapy cryptography
 }
 
 # Capture traffic
 capture_traffic() {
     log "Starting packet capture for $CAPTURE_DURATION seconds..." "$GREEN"
 
-    # Get the actual interface name if not specified
     if [ "$CAPTURE_INTERFACE" = "eth0" ]; then
         CAPTURE_INTERFACE=$(ip route get 8.8.8.8 | awk '{print $5; exit}')
         log "Using interface: $CAPTURE_INTERFACE" "$GREEN"
@@ -94,7 +89,6 @@ analyze_handshake() {
         -E header=y |
         sudo tee "${OUTPUT_DIR}/handshake_metadata.txt"
 
-    # Extract cipher suites offered
     sudo tshark -r "$PCAP_FILE" \
         -Y "tls.handshake.type == 1" \
         -T fields \
@@ -102,7 +96,6 @@ analyze_handshake() {
         sudo tee "${OUTPUT_DIR}/cipher_suites.txt"
 }
 
-# Python script for detailed TLS analysis
 create_python_analyzer() {
     cat <<'EOF' | sudo tee "${OUTPUT_DIR}/tls_analyzer.py"
 from scapy.all import *
@@ -147,34 +140,30 @@ EOF
     sudo chmod +x "${OUTPUT_DIR}/tls_analyzer.py"
 }
 
-# Run the Python analyzer
 run_python_analyzer() {
     log "Running detailed TLS analysis..." "$GREEN"
-    sudo python3 "${OUTPUT_DIR}/tls_analyzer.py" \
+    # Use Python from virtual environment
+    "$VENV_DIR/bin/python" "${OUTPUT_DIR}/tls_analyzer.py" \
         "$PCAP_FILE" \
         "${OUTPUT_DIR}/detailed_analysis.json"
 }
 
-# Display Results
 display_results() {
     log "\nAnalysis Results Summary:" "$GREEN"
 
-    # Display handshake metadata
     if [ -f "${OUTPUT_DIR}/handshake_metadata.txt" ]; then
         log "\nHandshake Metadata (first 5 lines):" "$GREEN"
         head -n 5 "${OUTPUT_DIR}/handshake_metadata.txt"
     fi
 
-    # Display cipher suites
     if [ -f "${OUTPUT_DIR}/cipher_suites.txt" ]; then
         log "\nDetected Cipher Suites:" "$GREEN"
         cat "${OUTPUT_DIR}/cipher_suites.txt"
     fi
 
-    # Display summary from detailed analysis
     if [ -f "${OUTPUT_DIR}/detailed_analysis.json" ]; then
         log "\nDetailed Analysis Summary:" "$GREEN"
-        sudo python3 -c "
+        "$VENV_DIR/bin/python" -c "
 import json
 with open('${OUTPUT_DIR}/detailed_analysis.json') as f:
     data = json.load(f)
@@ -184,19 +173,17 @@ print(f'Server Hello Messages: {len(data[\"server_hello\"])}')
     fi
 }
 
-# Cleanup function
 cleanup() {
-    # Set appropriate permissions for all generated files
     sudo chmod -R 644 "${OUTPUT_DIR}"/*
     sudo chmod 755 "${OUTPUT_DIR}"
+    sudo chmod -R 755 "$VENV_DIR"
 }
 
-# Main function
 main() {
     log "Starting TLS traffic analysis..." "$GREEN"
 
-    install_dependencies
-    setup_environment
+    install_system_dependencies
+    setup_virtual_environment
     capture_traffic
     analyze_handshake
     create_python_analyzer
@@ -210,6 +197,9 @@ main() {
     log "- Cipher suites: ${OUTPUT_DIR}/cipher_suites.txt" "$GREEN"
     log "- Detailed analysis: ${OUTPUT_DIR}/detailed_analysis.json" "$GREEN"
     log "- Raw capture: $PCAP_FILE" "$GREEN"
+
+    # Deactivate virtual environment
+    deactivate 2>/dev/null || true
 }
 
 main "$@"
