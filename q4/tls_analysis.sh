@@ -9,11 +9,13 @@ CAPTURE_DURATION=60
 CAPTURE_FILTER="tcp port 443"
 OUTPUT_DIR="/tmp/tls_analysis"
 LOG_FILE="${OUTPUT_DIR}/analysis.log"
-SSLKEYLOG_FILE="${OUTPUT_DIR}/sslkeylog.txt"
 PCAP_FILE="${OUTPUT_DIR}/capture.pcap"
-VENV_DIR="${OUTPUT_DIR}/venv"
+DECRYPTED_FILE="${OUTPUT_DIR}/decrypted.pcap"
+DOMAIN="aryansabet.com"
+SSL_KEY_PATH="/etc/letsencrypt/live/$DOMAIN/privkey.pem"
+SSL_CERT_PATH="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
 
-# Colors for output
+# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 NC='\033[0m'
@@ -36,47 +38,59 @@ error() {
     exit 1
 }
 
-# Install system dependencies
-install_system_dependencies() {
-    log "Installing system dependencies..." "$GREEN"
+# Check SSL certificates
+check_certificates() {
+    log "Checking SSL certificates..." "$GREEN"
+    if [ ! -f "$SSL_KEY_PATH" ] || [ ! -f "$SSL_CERT_PATH" ]; then
+        error "SSL certificates not found. Please ensure Let's Encrypt certificates are properly installed."
+    fi
+
+    # Create a copy of the private key with proper permissions for tshark
+    sudo cp "$SSL_KEY_PATH" "${OUTPUT_DIR}/privkey.pem"
+    sudo chmod 644 "${OUTPUT_DIR}/privkey.pem"
+    SSL_KEY_PATH="${OUTPUT_DIR}/privkey.pem"
+}
+
+# Install dependencies
+install_dependencies() {
+    log "Installing dependencies..." "$GREEN"
     sudo apt-get update
     sudo apt-get install -y \
         tshark \
         python3-full \
         python3-venv \
         curl \
-        openssl
-}
+        openssl \
+        wireshark-common
 
-# Setup Python virtual environment
-setup_virtual_environment() {
-    log "Setting up Python virtual environment..." "$GREEN"
-    python3 -m venv "$VENV_DIR"
-    # Activate virtual environment
-    source "$VENV_DIR/bin/activate"
-    # Install Python packages in virtual environment
+    # Create Python virtual environment
+    python3 -m venv "$OUTPUT_DIR/venv"
+    source "$OUTPUT_DIR/venv/bin/activate"
     pip install scapy cryptography
 }
 
-# Capture traffic
+# Capture traffic with decryption
 capture_traffic() {
-    log "Starting packet capture for $CAPTURE_DURATION seconds..." "$GREEN"
+    log "Starting packet capture with TLS decryption for $CAPTURE_DURATION seconds..." "$GREEN"
 
     if [ "$CAPTURE_INTERFACE" = "eth0" ]; then
         CAPTURE_INTERFACE=$(ip route get 8.8.8.8 | awk '{print $5; exit}')
         log "Using interface: $CAPTURE_INTERFACE" "$GREEN"
     fi
 
+    # Capture traffic with TLS decryption
     sudo tshark -i "$CAPTURE_INTERFACE" \
         -f "$CAPTURE_FILTER" \
         -w "$PCAP_FILE" \
+        -o "tls.keys_list:${DOMAIN},443,http,${SSL_KEY_PATH}" \
         -a duration:"$CAPTURE_DURATION"
 }
 
-# Analyze TLS handshake metadata
-analyze_handshake() {
-    log "Analyzing TLS handshake metadata..." "$GREEN"
+# Analyze TLS handshake and decrypted content
+analyze_traffic() {
+    log "Analyzing TLS traffic..." "$GREEN"
 
+    # Analyze handshake metadata
     sudo tshark -r "$PCAP_FILE" \
         -Y "tls.handshake" \
         -T fields \
@@ -86,25 +100,42 @@ analyze_handshake() {
         -e ip.dst \
         -e tls.handshake.type \
         -e tls.handshake.version \
-        -E header=y |
-        sudo tee "${OUTPUT_DIR}/handshake_metadata.txt"
+        -E header=y \
+        >"${OUTPUT_DIR}/handshake_metadata.txt"
 
+    # Extract cipher suites
     sudo tshark -r "$PCAP_FILE" \
         -Y "tls.handshake.type == 1" \
         -T fields \
-        -e tls.handshake.ciphersuite |
-        sudo tee "${OUTPUT_DIR}/cipher_suites.txt"
+        -e tls.handshake.ciphersuite \
+        >"${OUTPUT_DIR}/cipher_suites.txt"
+
+    # Decrypt and analyze HTTP content
+    sudo tshark -r "$PCAP_FILE" \
+        -o "tls.keys_list:${DOMAIN},443,http,${SSL_KEY_PATH}" \
+        -Y "http" \
+        -T fields \
+        -e http.request.method \
+        -e http.request.uri \
+        -e http.response.code \
+        -e http.content_type \
+        >"${OUTPUT_DIR}/decrypted_http.txt"
+
+    # Save full decrypted traffic
+    sudo tshark -r "$PCAP_FILE" \
+        -o "tls.keys_list:${DOMAIN},443,http,${SSL_KEY_PATH}" \
+        -w "$DECRYPTED_FILE"
 }
 
+# Create Python analyzer script
 create_python_analyzer() {
-    cat <<'EOF' | sudo tee "${OUTPUT_DIR}/tls_analyzer.py"
+    cat >"${OUTPUT_DIR}/tls_analyzer.py" <<'EOF'
 from scapy.all import *
 from scapy.layers.tls.all import *
 import sys
 import json
 
 def get_tls_version(version_int):
-    """Convert TLS version number to string representation."""
     versions = {
         0x0300: "SSLv3",
         0x0301: "TLSv1.0",
@@ -115,7 +146,6 @@ def get_tls_version(version_int):
     return versions.get(version_int, f"Unknown (0x{version_int:04x})")
 
 def get_cipher_suite(cipher_int):
-    """Convert cipher suite number to string representation."""
     ciphers = {
         0x1301: "TLS_AES_128_GCM_SHA256",
         0x1302: "TLS_AES_256_GCM_SHA384",
@@ -135,133 +165,141 @@ def get_cipher_suite(cipher_int):
     }
     return ciphers.get(cipher_int, f"Unknown (0x{cipher_int:04x})")
 
-def analyze_pcap(pcap_file, output_file):
+def analyze_decrypted_pcap(pcap_file, output_file):
     packets = rdpcap(pcap_file)
     results = {
-        'client_hello': [],
-        'server_hello': [],
-        'certificates': []
+        'handshake': {
+            'client_hello': [],
+            'server_hello': [],
+        },
+        'decrypted_content': {
+            'http_requests': [],
+            'http_responses': []
+        }
     }
-    
+
     for pkt in packets:
         try:
             if TLS in pkt:
                 if TLSClientHello in pkt:
                     hello = pkt[TLSClientHello]
-                    cipher_suites = []
-                    if hasattr(hello, 'ciphers'):
-                        cipher_suites = [get_cipher_suite(c) for c in hello.ciphers]
-                    
-                    results['client_hello'].append({
+                    results['handshake']['client_hello'].append({
                         'timestamp': float(pkt.time),
                         'version': get_tls_version(hello.version),
-                        'cipher_suites': cipher_suites,
-                        'random': hello.random_bytes.hex()[:20] + '...' if hasattr(hello, 'random_bytes') else 'N/A'
+                        'cipher_suites': [get_cipher_suite(c) for c in hello.ciphers] if hasattr(hello, 'ciphers') else []
                     })
                 elif TLSServerHello in pkt:
                     hello = pkt[TLSServerHello]
-                    results['server_hello'].append({
+                    results['handshake']['server_hello'].append({
                         'timestamp': float(pkt.time),
                         'version': get_tls_version(hello.version),
-                        'cipher_suite': get_cipher_suite(hello.cipher) if hasattr(hello, 'cipher') else 'Unknown'
+                        'selected_cipher': get_cipher_suite(hello.cipher) if hasattr(hello, 'cipher') else 'Unknown'
                     })
+
+            # Analyze decrypted HTTP content if available
+            if Raw in pkt and (b'HTTP/' in pkt[Raw].load or b'GET ' in pkt[Raw].load or b'POST ' in pkt[Raw].load):
+                content = pkt[Raw].load.decode('utf-8', errors='ignore')
+                if 'GET ' in content or 'POST ' in content:
+                    results['decrypted_content']['http_requests'].append({
+                        'timestamp': float(pkt.time),
+                        'content': content[:200] + '...' if len(content) > 200 else content
+                    })
+                elif 'HTTP/' in content:
+                    results['decrypted_content']['http_responses'].append({
+                        'timestamp': float(pkt.time),
+                        'content': content[:200] + '...' if len(content) > 200 else content
+                    })
+
         except Exception as e:
             print(f"Error processing packet: {e}")
             continue
 
-    # Add summary
-    results['summary'] = {
-        'total_client_hello': len(results['client_hello']),
-        'total_server_hello': len(results['server_hello']),
-        'protocol_versions': list(set(ch['version'] for ch in results['client_hello'] + results['server_hello'])),
-        'unique_cipher_suites': list(set(cs for ch in results['client_hello'] for cs in ch['cipher_suites']))
-    }
-
     with open(output_file, 'w') as f:
         json.dump(results, f, indent=2)
-        
-    # Print summary to console
-    print("\nTLS Analysis Summary:")
-    print(f"Client Hello Messages: {results['summary']['total_client_hello']}")
-    print(f"Server Hello Messages: {results['summary']['total_server_hello']}")
-    print("\nProtocol Versions Used:")
-    for version in results['summary']['protocol_versions']:
-        print(f"- {version}")
-    print("\nUnique Cipher Suites Offered:")
-    for cipher in results['summary']['unique_cipher_suites']:
-        print(f"- {cipher}")
+
+    # Print summary
+    print("\nAnalysis Summary:")
+    print(f"Client Hello Messages: {len(results['handshake']['client_hello'])}")
+    print(f"Server Hello Messages: {len(results['handshake']['server_hello'])}")
+    print(f"Decrypted HTTP Requests: {len(results['decrypted_content']['http_requests'])}")
+    print(f"Decrypted HTTP Responses: {len(results['decrypted_content']['http_responses'])}")
 
 if __name__ == '__main__':
     if len(sys.argv) != 3:
         print("Usage: python3 tls_analyzer.py <pcap_file> <output_file>")
         sys.exit(1)
-    
-    analyze_pcap(sys.argv[1], sys.argv[2])
+
+    analyze_decrypted_pcap(sys.argv[1], sys.argv[2])
 EOF
 
     sudo chmod +x "${OUTPUT_DIR}/tls_analyzer.py"
 }
 
+# Run the Python analyzer
 run_python_analyzer() {
-    log "Running detailed TLS analysis..." "$GREEN"
-    # Use Python from virtual environment
-    "$VENV_DIR/bin/python" "${OUTPUT_DIR}/tls_analyzer.py" \
-        "$PCAP_FILE" \
+    log "Running detailed TLS analysis with decryption..." "$GREEN"
+    source "$OUTPUT_DIR/venv/bin/activate"
+    python3 "${OUTPUT_DIR}/tls_analyzer.py" \
+        "$DECRYPTED_FILE" \
         "${OUTPUT_DIR}/detailed_analysis.json"
 }
 
+# Display results summary
 display_results() {
-    log "\nAnalysis Results Summary:" "$GREEN"
+    log "\nAnalysis Results:" "$GREEN"
 
+    # Display handshake metadata
     if [ -f "${OUTPUT_DIR}/handshake_metadata.txt" ]; then
-        log "\nHandshake Metadata (first 5 lines):" "$GREEN"
-        head -n 5 "${OUTPUT_DIR}/handshake_metadata.txt"
+        log "\nHandshake Metadata:" "$GREEN"
+        cat "${OUTPUT_DIR}/handshake_metadata.txt"
     fi
 
-    if [ -f "${OUTPUT_DIR}/cipher_suites.txt" ]; then
-        log "\nDetected Cipher Suites:" "$GREEN"
-        cat "${OUTPUT_DIR}/cipher_suites.txt"
+    # Display decrypted HTTP content
+    if [ -f "${OUTPUT_DIR}/decrypted_http.txt" ]; then
+        log "\nDecrypted HTTP Traffic:" "$GREEN"
+        cat "${OUTPUT_DIR}/decrypted_http.txt"
     fi
 
+    # Display detailed analysis
     if [ -f "${OUTPUT_DIR}/detailed_analysis.json" ]; then
         log "\nDetailed Analysis Summary:" "$GREEN"
-        "$VENV_DIR/bin/python" -c "
+        python3 -c "
 import json
 with open('${OUTPUT_DIR}/detailed_analysis.json') as f:
     data = json.load(f)
-print(f'Client Hello Messages: {len(data[\"client_hello\"])}')
-print(f'Server Hello Messages: {len(data[\"server_hello\"])}')
+print(f'Handshake Analysis:')
+print(f'- Client Hello Messages: {len(data[\"handshake\"][\"client_hello\"])}')
+print(f'- Server Hello Messages: {len(data[\"handshake\"][\"server_hello\"])}')
+print(f'\nDecrypted Content Analysis:')
+print(f'- HTTP Requests: {len(data[\"decrypted_content\"][\"http_requests\"])}')
+print(f'- HTTP Responses: {len(data[\"decrypted_content\"][\"http_responses\"])}')
 "
     fi
 }
 
-cleanup() {
-    sudo chmod -R 644 "${OUTPUT_DIR}"/*
-    sudo chmod 755 "${OUTPUT_DIR}"
-    sudo chmod -R 755 "$VENV_DIR"
-}
-
+# Main function
 main() {
-    log "Starting TLS traffic analysis..." "$GREEN"
+    if [ "$EUID" -ne 0 ]; then
+        error "Please run as root (sudo)"
+    fi
 
-    install_system_dependencies
-    setup_virtual_environment
+    log "Starting TLS traffic analysis with decryption..." "$GREEN"
+
+    check_certificates
+    install_dependencies
     capture_traffic
-    analyze_handshake
+    analyze_traffic
     create_python_analyzer
     run_python_analyzer
     display_results
-    cleanup
 
     log "\nAnalysis completed. Results are in $OUTPUT_DIR" "$GREEN"
     log "Key files:" "$GREEN"
-    log "- Handshake metadata: ${OUTPUT_DIR}/handshake_metadata.txt" "$GREEN"
-    log "- Cipher suites: ${OUTPUT_DIR}/cipher_suites.txt" "$GREEN"
-    log "- Detailed analysis: ${OUTPUT_DIR}/detailed_analysis.json" "$GREEN"
     log "- Raw capture: $PCAP_FILE" "$GREEN"
-
-    # Deactivate virtual environment
-    deactivate 2>/dev/null || true
+    log "- Decrypted capture: $DECRYPTED_FILE" "$GREEN"
+    log "- Handshake metadata: ${OUTPUT_DIR}/handshake_metadata.txt" "$GREEN"
+    log "- Decrypted HTTP traffic: ${OUTPUT_DIR}/decrypted_http.txt" "$GREEN"
+    log "- Detailed analysis: ${OUTPUT_DIR}/detailed_analysis.json" "$GREEN"
 }
 
 main "$@"
