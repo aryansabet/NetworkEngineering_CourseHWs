@@ -261,7 +261,7 @@ main() {
     if [ "$EUID" -ne 0 ]; then 
         print_message "Please run as root (sudo)" "$RED"
         exit 1
-    }
+    fi
     
     print_message "Starting secure website setup..." "$GREEN"
     
