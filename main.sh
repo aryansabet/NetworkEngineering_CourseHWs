@@ -4,7 +4,7 @@
 DOMAIN=""
 EMAIL=""
 PROJECT_DIR="/var/www/secure-website"
-APP_PORT=3000 
+APP_PORT=3000  # Changed from 443 to avoid conflict with HTTPS
 
 # Color codes for output
 RED='\033[0;31m'
@@ -45,7 +45,7 @@ validate_email() {
 get_user_input() {
     read -p "Enter your domain name (without www): " DOMAIN
     validate_domain "$DOMAIN"
-
+    
     read -p "Enter your email address: " EMAIL
     validate_email "$EMAIL"
 }
@@ -73,7 +73,6 @@ setup_firewall() {
     sudo ufw allow 80/tcp
     sudo ufw allow 443/tcp
     sudo ufw allow OpenSSH
-    sudo ufw allow $APP_PORT
     sudo ufw --force enable
     check_error "Failed to configure firewall"
 }
@@ -81,9 +80,9 @@ setup_firewall() {
 # Configure Nginx
 setup_nginx() {
     print_message "Configuring Nginx..." "$YELLOW"
-
+    
     # Create Nginx configuration
-    cat >/etc/nginx/sites-available/$DOMAIN <<EOL
+    cat > /etc/nginx/sites-available/$DOMAIN << EOL
 server {
     listen 80;
     server_name ${DOMAIN} www.${DOMAIN};
@@ -97,7 +96,16 @@ server {
     listen 443 ssl http2;
     server_name ${DOMAIN} www.${DOMAIN};
     
-    # SSL configuration will be handled by Certbot
+    ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+    
+    add_header Strict-Transport-Security "max-age=31536000" always;
     
     location / {
         proxy_pass http://localhost:${APP_PORT};
@@ -106,9 +114,6 @@ server {
         proxy_set_header Connection 'upgrade';
         proxy_set_header Host \$host;
         proxy_cache_bypass \$http_upgrade;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
     }
 }
 EOL
@@ -116,7 +121,7 @@ EOL
     # Enable site and remove default
     sudo ln -sf /etc/nginx/sites-available/$DOMAIN /etc/nginx/sites-enabled/
     sudo rm -f /etc/nginx/sites-enabled/default
-
+    
     # Test configuration
     sudo nginx -t
     check_error "Nginx configuration test failed"
@@ -125,22 +130,10 @@ EOL
 # Set up Let's Encrypt certificate
 setup_ssl() {
     print_message "Setting up SSL certificate..." "$YELLOW"
-
+    
     sudo certbot --nginx -d $DOMAIN -d www.$DOMAIN --non-interactive --agree-tos --email $EMAIL
     check_error "Failed to obtain SSL certificate"
-
-    # Set up auto-renewal
-    sudo systemctl enable certbot.timer
-    sudo systemctl start certbot.timer
-}
-
-# Set up Let's Encrypt certificate
-setup_ssl() {
-    print_message "Setting up SSL certificate..." "$YELLOW"
-
-    sudo certbot --nginx -d $DOMAIN -d www.$DOMAIN --non-interactive --agree-tos --email $EMAIL --redirect
-    check_error "Failed to obtain SSL certificate"
-
+    
     # Set up auto-renewal
     sudo systemctl enable certbot.timer
     sudo systemctl start certbot.timer
@@ -149,18 +142,19 @@ setup_ssl() {
 # Create Node.js application
 create_nodejs_app() {
     print_message "Creating Node.js application..." "$YELLOW"
-
+    
     # Create project directory
     sudo mkdir -p $PROJECT_DIR
     sudo chown -R $USER:$USER $PROJECT_DIR
-
+    
     # Create package.json
-    cat >$PROJECT_DIR/package.json <<EOL
+    cat > $PROJECT_DIR/package.json << EOL
 {
   "name": "secure-website",
   "version": "1.0.0",
   "description": "Secure website with Let's Encrypt",
   "main": "app.js",
+  "type": "module",
   "scripts": {
     "start": "node app.js"
   },
@@ -171,7 +165,7 @@ create_nodejs_app() {
 EOL
 
     # Create app.js
-    cat >$PROJECT_DIR/app.js <<EOL
+    cat > $PROJECT_DIR/app.js << EOL
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -196,7 +190,7 @@ EOL
 
     # Create public directory and index.html
     mkdir -p $PROJECT_DIR/public
-    cat >$PROJECT_DIR/public/index.html <<EOL
+    cat > $PROJECT_DIR/public/index.html << EOL
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -238,8 +232,8 @@ EOL
 # Create systemd service
 create_service() {
     print_message "Creating systemd service..." "$YELLOW"
-
-    cat >/etc/systemd/system/secure-website.service <<EOL
+    
+    cat > /etc/systemd/system/secure-website.service << EOL
 [Unit]
 Description=Secure Website Node.js Application
 After=network.target
@@ -264,12 +258,13 @@ EOL
 # Main installation process
 main() {
     # Check if script is run as root
-    if [ "$EUID" -ne 0 ]; then
+    if [ "$EUID" -ne 0 ]; then 
         print_message "Please run as root (sudo)" "$RED"
         exit 1
-    fi
+    }
+    
     print_message "Starting secure website setup..." "$GREEN"
-
+    
     get_user_input
     install_dependencies
     setup_firewall
@@ -277,12 +272,13 @@ main() {
     setup_ssl
     create_nodejs_app
     create_service
-
+    
     # Final restart of Nginx
     sudo systemctl restart nginx
-
+    
     print_message "Installation completed successfully!" "$GREEN"
     print_message "Your secure website is now available at https://$DOMAIN" "$GREEN"
+    print_message "Node.js version: $(node -v)" "$GREEN"
 }
 
 # Run the script
