@@ -11,8 +11,9 @@ OUTPUT_DIR="/tmp/tls_analysis"
 LOG_FILE="${OUTPUT_DIR}/analysis.log"
 PCAP_FILE="${OUTPUT_DIR}/capture.pcap"
 DECRYPTED_FILE="${OUTPUT_DIR}/decrypted.pcap"
-PROJECT_DIR="/var/www/secure-website"
 LETSENCRYPT_DIR="/etc/letsencrypt/live"
+TEMP_RSA_KEY="${OUTPUT_DIR}/temp_rsa.pem"
+TEMP_RSA_CERT="${OUTPUT_DIR}/temp_rsa_cert.pem"
 
 # Colors
 RED='\033[0;31m'
@@ -52,11 +53,39 @@ find_domain() {
     return 1
 }
 
-# Check SSL certificates
+# Convert ECDSA to RSA key for tshark
+convert_to_rsa() {
+    local original_key="$1"
+    local original_cert="$2"
+
+    log "Converting ECDSA key to RSA format..." "$GREEN"
+
+    # Generate new RSA key
+    openssl genrsa -out "$TEMP_RSA_KEY" 2048
+
+    # Create CSR from original cert
+    openssl req -new -key "$TEMP_RSA_KEY" -out "${OUTPUT_DIR}/temp.csr" \
+        -subj "/CN=$(openssl x509 -noout -subject -in "$original_cert" | sed -n 's/.*CN=\([^/]*\).*/\1/p')"
+
+    # Create self-signed certificate
+    openssl x509 -req -days 1 \
+        -in "${OUTPUT_DIR}/temp.csr" \
+        -signkey "$TEMP_RSA_KEY" \
+        -out "$TEMP_RSA_CERT"
+
+    # Clean up
+    rm -f "${OUTPUT_DIR}/temp.csr"
+
+    # Set permissions
+    chmod 644 "$TEMP_RSA_KEY"
+    chmod 644 "$TEMP_RSA_CERT"
+}
+
+# Setup certificates
 setup_certificates() {
     log "Setting up SSL certificates for analysis..." "$GREEN"
 
-    # Find the domain from nginx config
+    # Find the domain
     DOMAIN=$(find_domain)
     if [ -z "$DOMAIN" ]; then
         error "Could not find domain in nginx configuration"
@@ -71,16 +100,22 @@ setup_certificates() {
         error "SSL certificates not found for domain $DOMAIN"
     fi
 
-    # Create working copies of the certificates
-    sudo cp "$SSL_KEY_PATH" "${OUTPUT_DIR}/privkey.pem"
-    sudo cp "$SSL_CERT_PATH" "${OUTPUT_DIR}/fullchain.pem"
-    sudo chmod 644 "${OUTPUT_DIR}/privkey.pem"
-    sudo chmod 644 "${OUTPUT_DIR}/fullchain.pem"
+    # Convert ECDSA to RSA if necessary
+    local key_type
+    key_type=$(openssl pkey -in "$SSL_KEY_PATH" -text 2>/dev/null | grep -o "KEY.*" | head -1)
 
-    # Set up SSLKEYLOG for additional decryption capability
-    export SSLKEYLOGFILE="${OUTPUT_DIR}/sslkey.log"
-    sudo touch "$SSLKEYLOGFILE"
-    sudo chmod 666 "$SSLKEYLOGFILE"
+    if [[ $key_type == *"EC"* ]]; then
+        log "Detected ECDSA key, converting to RSA..." "$GREEN"
+        convert_to_rsa "$SSL_KEY_PATH" "$SSL_CERT_PATH"
+        SSL_KEY_PATH="$TEMP_RSA_KEY"
+        SSL_CERT_PATH="$TEMP_RSA_CERT"
+    else
+        log "Using existing RSA key..." "$GREEN"
+        cp "$SSL_KEY_PATH" "${OUTPUT_DIR}/key.pem"
+        cp "$SSL_CERT_PATH" "${OUTPUT_DIR}/cert.pem"
+        SSL_KEY_PATH="${OUTPUT_DIR}/key.pem"
+        SSL_CERT_PATH="${OUTPUT_DIR}/cert.pem"
+    fi
 }
 
 # Install dependencies
@@ -109,18 +144,16 @@ capture_traffic() {
         log "Using interface: $CAPTURE_INTERFACE" "$GREEN"
     fi
 
-    # Capture with both keylog and certificate-based decryption
+    # Capture traffic
     sudo tshark -i "$CAPTURE_INTERFACE" \
         -f "$CAPTURE_FILTER" \
         -w "$PCAP_FILE" \
-        -o "tls.keylog_file:${SSLKEYLOGFILE}" \
-        -o "tls.keys_list:${DOMAIN},443,http,${OUTPUT_DIR}/privkey.pem" \
         -a duration:"$CAPTURE_DURATION"
 }
 
-# Analyze captured traffic
+# Analyze traffic with RSA key
 analyze_traffic() {
-    log "Analyzing TLS traffic..." "$GREEN"
+    log "Analyzing TLS traffic with RSA key..." "$GREEN"
 
     # Analyze TLS handshake metadata
     sudo tshark -r "$PCAP_FILE" \
@@ -132,7 +165,6 @@ analyze_traffic() {
         -e ip.dst \
         -e tls.handshake.type \
         -e tls.handshake.version \
-        -e tls.handshake.extensions.supported_version \
         -E header=y \
         >"${OUTPUT_DIR}/handshake_metadata.txt"
 
@@ -141,67 +173,49 @@ analyze_traffic() {
         -Y "tls.handshake.type == 1" \
         -T fields \
         -e tls.handshake.ciphersuite \
-        -e tls.handshake.extensions.supported_groups \
         >"${OUTPUT_DIR}/cipher_suites.txt"
 
-    # Try to decrypt and analyze HTTP traffic
+    # Try to decrypt with RSA key
     sudo tshark -r "$PCAP_FILE" \
-        -o "tls.keylog_file:${SSLKEYLOGFILE}" \
-        -o "tls.keys_list:${DOMAIN},443,http,${OUTPUT_DIR}/privkey.pem" \
-        -Y "http" \
+        -o "tls.keys_list:${DOMAIN},443,http,${SSL_KEY_PATH}" \
+        -q -z "follow,tls,ascii,0" \
+        >"${OUTPUT_DIR}/decrypted_content.txt"
+
+    # Save decrypted summary
+    sudo tshark -r "$PCAP_FILE" \
+        -o "tls.keys_list:${DOMAIN},443,http,${SSL_KEY_PATH}" \
         -T fields \
         -e frame.time \
-        -e http.request.method \
-        -e http.request.uri \
-        -e http.response.code \
-        -e http.content_type \
-        >"${OUTPUT_DIR}/decrypted_http.txt"
-
-    # Save full decrypted traffic
-    sudo tshark -r "$PCAP_FILE" \
-        -o "tls.keylog_file:${SSLKEYLOGFILE}" \
-        -o "tls.keys_list:${DOMAIN},443,http,${OUTPUT_DIR}/privkey.pem" \
-        -w "$DECRYPTED_FILE"
-
-    # Extract TLS session info
-    sudo tshark -r "$PCAP_FILE" \
-        -Y "tls.handshake" \
-        -T json \
-        >"${OUTPUT_DIR}/tls_sessions.json"
+        -e tls.record.content_type \
+        -e tls.handshake.type \
+        -E header=y \
+        >"${OUTPUT_DIR}/tls_summary.txt"
 }
 
-# Create summary report
+# Create summary
 create_summary() {
-    local summary_file="${OUTPUT_DIR}/analysis_summary.txt"
+    log "\nAnalysis Results:" "$GREEN"
 
-    {
-        echo "TLS Traffic Analysis Summary"
-        echo "============================"
-        echo
-        echo "Domain: $DOMAIN"
-        echo "Capture Duration: $CAPTURE_DURATION seconds"
-        echo "Interface: $CAPTURE_INTERFACE"
-        echo
-        echo "TLS Handshakes:"
-        grep -c "handshake" "${OUTPUT_DIR}/handshake_metadata.txt" || echo "0"
-        echo
-        echo "Cipher Suites Used:"
-        sort -u "${OUTPUT_DIR}/cipher_suites.txt" | while read -r cipher; do
-            echo "- $cipher"
-        done
-        echo
-        echo "HTTP Requests (Decrypted):"
-        wc -l <"${OUTPUT_DIR}/decrypted_http.txt"
-    } >"$summary_file"
+    if [ -f "${OUTPUT_DIR}/handshake_metadata.txt" ]; then
+        log "\nTLS Handshake Information:" "$GREEN"
+        cat "${OUTPUT_DIR}/handshake_metadata.txt"
+    fi
 
-    log "\nAnalysis Summary:" "$GREEN"
-    cat "$summary_file"
+    if [ -f "${OUTPUT_DIR}/cipher_suites.txt" ]; then
+        log "\nDetected Cipher Suites:" "$GREEN"
+        cat "${OUTPUT_DIR}/cipher_suites.txt"
+    fi
+
+    if [ -f "${OUTPUT_DIR}/tls_summary.txt" ]; then
+        log "\nTLS Session Summary:" "$GREEN"
+        cat "${OUTPUT_DIR}/tls_summary.txt"
+    fi
 }
 
-# Clean up temporary files
+# Cleanup temporary files
 cleanup() {
-    log "Cleaning up temporary files..." "$GREEN"
-    sudo rm -f "${OUTPUT_DIR}/privkey.pem" "${OUTPUT_DIR}/fullchain.pem"
+    log "Cleaning up..." "$GREEN"
+    rm -f "$TEMP_RSA_KEY" "$TEMP_RSA_CERT"
     sudo chmod -R 755 "$OUTPUT_DIR"
 }
 
@@ -222,12 +236,10 @@ main() {
     log "\nAnalysis completed. Results are in $OUTPUT_DIR" "$GREEN"
     log "Key files:" "$GREEN"
     log "- Raw capture: $PCAP_FILE" "$GREEN"
-    log "- Decrypted capture: $DECRYPTED_FILE" "$GREEN"
     log "- Handshake metadata: ${OUTPUT_DIR}/handshake_metadata.txt" "$GREEN"
     log "- Cipher suites: ${OUTPUT_DIR}/cipher_suites.txt" "$GREEN"
-    log "- Decrypted HTTP traffic: ${OUTPUT_DIR}/decrypted_http.txt" "$GREEN"
-    log "- TLS sessions: ${OUTPUT_DIR}/tls_sessions.json" "$GREEN"
-    log "- Analysis summary: ${OUTPUT_DIR}/analysis_summary.txt" "$GREEN"
+    log "- TLS summary: ${OUTPUT_DIR}/tls_summary.txt" "$GREEN"
+    log "- Decrypted content: ${OUTPUT_DIR}/decrypted_content.txt" "$GREEN"
 }
 
 main "$@"
